@@ -11,7 +11,7 @@ import tensorflow as tf
 import time
 import pickle
 
-import maddpg.common.tf_util as U
+import ATOC_COMA.common.tf_util as U
 from ATOC_COMA.trainer.atoc_coma import ATOC_COMA_AgentTrainer
 import tensorflow.contrib.layers as layers
 from tensorflow.contrib import rnn
@@ -61,10 +61,25 @@ def make_env(scenario_name, arglist, benchmark=False):
         env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation)  # reset, reward, obs are callbacks
     return env
 
+'''
+Since we want all the actors and critics to have the network, we want to share, i.e., "reuse" the parameters
+Also, to do this we need to make the "scope" of the variables that we want to reuse the same.
 
-def mlp_model_1(input, num_outputs, scope, reuse=False, num_units=64, rnn_cell=None):
-    # This model takes as input an observation and returns values of all actions
-    # TODO: may need to modify this based on what type/types of networks the ATOC used, and what COMA used
+look at variable_scope.py
+'''
+
+def mlp_actor_model_1(input, num_outputs, scope, reuse=True, num_units=64, rnn_cell=None):
+    '''
+    :param input: from local observations
+    :param num_outputs: output of Actor_Part1
+    :param scope: variable scope
+    :param reuse: true/false for sharing variables
+    :param num_units: hidden units
+    :param rnn_cell: ?
+
+    NOTE:
+    Setting reuse "true" so that all agents can update the same model
+    '''
     with tf.variable_scope(scope, reuse=reuse):
         out = input
         out = layers.fully_connected(out, num_outputs=num_units, activation_fn=tf.nn.relu)
@@ -72,22 +87,35 @@ def mlp_model_1(input, num_outputs, scope, reuse=False, num_units=64, rnn_cell=N
         out = layers.fully_connected(out, num_outputs=num_outputs, activation_fn=None)
         return out
 
-def mlp_model_2(input, num_outputs, scope, reuse=False, num_units=64, rnn_Cell=None):
-    # This model is designed to be the second part of the actor network
+
+def mlp_actor_model_2(input, num_outputs, scope, reuse=True, num_units=64, rnn_Cell=None):
+    '''
+    :param input: output from the attentional network and comm. channel (if necessary)
+    This model is designed to be the second part of the actor network
+    '''
     with tf.variable_scope(scope, reuse=reuse):
         out = input
         out = layers.fully_connected(out, num_outputs=num_units, activation_fn=tf.nn.relu)
         out = layers.fully_connected(out, num_outputs=num_units, activation_fn=tf.nn.relu)
         out = layers.fully_connected(out, num_outputs, activation_fn=None)
+        return out
         # TODO: Check what the activation function be?
 
-def rnn_model(input, num_outputs, scope, reuse=False, num_units=128, length=10):
-    # This is the Recurrent Neural Netowrk for the attention unit. Binary classifier.
+
+def mlp_critic_model(input, num_outputs, scope, reuse=True, num_units=128, rnn_cell=None):
     with tf.variable_scope(scope, reuse=reuse):
         out = input
-        cell = rnn.BasicRNNCell(num_units)
+        out = layers.fully_connected(out, num_outputs=num_units, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(out, num_outputs=num_units, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(out, num_outputs=num_outputs, activation_fn=None)
+        return out
 
 
+def rnn_model(input, num_outputs, scope, reuse=False, num_units=128, length=10):
+    # This is the Recurrent Neural Network for the attention unit. Binary classifier.
+    with tf.variable_scope(scope, reuse=reuse):
+        out = input
+        cell = rnn.BasicRNNCell(num_units=num_units, activation="tanh")
 
 
 def train(arglist):
@@ -101,5 +129,5 @@ def train(arglist):
         num_adversaries = min(env.n, arglist.num_adversaries)
 
         # Initialize the Actor and Critic network (these are shared among all agents)
-        model = mlp_model
+        model = mlp_model_1    # reference to the object class, i.e., not using ()
         trainer = ATOC_COMA_AgentTrainer("shared_actor_critic", model, obs_shape_n, env.action_space, 1, arglist, local_q_func=True)
