@@ -118,6 +118,10 @@ def rnn_model(input, num_outputs, scope, reuse=False, num_units=128, length=10):
         cell = rnn.BasicRNNCell(num_units=num_units, activation="tanh")
 
 
+def lstm_model():
+    pass
+
+
 def train(arglist):
     with U.single_threaded_session():
         # Create environment. This takes the scenario and creates a world, and creates and environment with all the
@@ -129,5 +133,24 @@ def train(arglist):
         num_adversaries = min(env.n, arglist.num_adversaries)
 
         # Initialize the Actor and Critic network (these are shared among all agents)
-        model = mlp_model_1    # reference to the object class, i.e., not using ()
-        trainer = ATOC_COMA_AgentTrainer("shared_actor_critic", model, obs_shape_n, env.action_space, 1, arglist, local_q_func=True)
+        actor1 = mlp_actor_model_1    # reference to the object class, i.e., not using ()
+        actor2 = mlp_actor_model_2
+        critic = mlp_critic_model
+        attn = rnn_model
+        trainer = ATOC_COMA_AgentTrainer("shared_trainer",    # Dont we need the same number of trainers as agents in the env?
+                                         actor1,
+                                         actor2,
+                                         critic,
+                                         attn,
+                                         obs_shape_n,
+                                         env.action_space,
+                                         1,
+                                         arglist,
+                                         local_q_func=True)
+        '''
+        So what have we done till here:
+        We have created the env based on the scenario.
+        We have created the neural network models for the actor1, actor2, attention unit, and the critic. Remember, these
+        are just the models. Also we are yet to define the LSTM!!!
+        '''
+
