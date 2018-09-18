@@ -32,41 +32,70 @@ def make_update_exp(vals, target_vals):
     return U.function([], [], updates=[expression])
 
 
-def p_train_1(make_obs_ph_n, act_space_n, p_index, p_func, q_func, optimizer, grad_norm_clipping=None, local_q_func=True, num_units=64, scope="trainer", reuse=True):
+def p_train_1(make_obs_ph_n, act_space_n, p_index, p_func, q_func, optimizer,
+              grad_norm_clipping=None, local_q_func=True, num_units=64, scope="trainer", reuse=True):
     with tf.variable_scope(scope, reuse=reuse):
-        # create distribtuions
+        '''
+        For some reason, make_obs_ph_n will have the observations from all agents, and
+        act_space_n will have the action space of all agents.
+        '''
+        # create distribtuion based on the type of action_space, +
         act_pdtype_n = [make_pdtype(act_space) for act_space in act_space_n]
 
-        # set up placeholders
-        obs_ph_n = make_obs_ph_n
-        act_ph_n = [act_pdtype_n[i].sample_placeholder([None], name="action"+str(i)) for i in range(len(act_space_n))]
+        # set up placeholders. This is for n number of agents...  , +
+        obs_ph_n = make_obs_ph_n  # +, ~
+        act_ph_n = [act_pdtype_n[i].sample_placeholder([None], name="action"+str(i)) for i in range(len(act_space_n))]  # +, ~
+        # well, okay now act_ph_n has placeholders for n actor actions, just like the obs_ph_n
+        # However not sure why I would need placeholder for all n actions
 
-        p_input = obs_ph_n[p_index]
+        p_input = obs_ph_n[p_index]  # +, for this agent, this is the particular input
 
         # Instantiate the actor model
-        p = p_func(p_input, int(act_pdtype_n[p_index].param_shape()[0]), scope="p_func_1", num_units=num_units)
-        p_func_vars = U.scope_vars(U.absolute_scope_name("p_func_1"))
-        # TODO: check what the p_func_vars is actually doing
+        p = p_func(p_input, int(act_pdtype_n[p_index].param_shape()[0]), scope="p_func_1", num_units=num_units)  # ,+
+        # Get the parameters of the actor model for training
+        p_func_vars = U.scope_vars(U.absolute_scope_name("p_func_1"))  # , +
+        # Now I have the tensor variables of the actor model, so that I can send it to the optimizer so that it
+        # minimizes the loss wrt these variable, i.e., get the gradients of the loss wrt these variables, in order to
+        # train the actor model
 
-        # wrap parameters in distribution
-        act_pd = act_pdtype_n[p_index].pdfromflat(p)
+        # wrap parameters in distribution. # I believe this will return instance of e.g., class MultiCategoricalPd(Pd)
+        # NOTE: 'p' is the output of our actor model (some number), and I think act_pd uses that number to sample
+        # from a distribution, so out "action" would be the one sampled from this probability distribution
+        act_pd = act_pdtype_n[p_index].pdfromflat(p)  # ,- TODO: not sure how things inside this are working
+        # however, basically it gives an instance of actor probability distribution such that we can sample actions
 
-        act_sample = act_pd.sample()
-        p_reg = tf.reduce_mean(tf.square(act_pd.flatparam()))
+        act_sample = act_pd.sample()  # , -TODO: not sure why we need this
 
-        act_input_n = act_ph_n + []
-        act_input_n[p_index] = act_pd.sample() #act_pd.mode() #
+        # Computes the mean of elements across dimensions of a tensor. Equivalent to np.mean
+        p_reg = tf.reduce_mean(tf.square(act_pd.flatparam()))  # , - TODO: which part of eqn does this fit into? and why is it named p_reg though?
+
+        act_input_n = act_ph_n + []  # , +
+        act_input_n[p_index] = act_pd.sample()  # +, sample an action for a particular actor
+        # TODO: Why are we storing all the actor observations and actions?
+
+        # q_input = tf.concat(obs_ph_n + act_input_n, 1)  # this was before when maddpg needed actions/obs of all agents
         # TODO: make sure we are updating the shared Q-network
-        q_input = tf.concat(obs_ph_n + act_input_n, 1)
-        if local_q_func:    # THIS IS WHAT WE WANT SINCE ATOC IS LOCAL Q-updates
-            q_input = tf.concat([obs_ph_n[p_index], act_input_n[p_index]], 1)
-        q = q_func(q_input, 1, scope="q_func", reuse=True, num_units=num_units)[:,0]
+        if local_q_func:    # centralized critic, but updates are based on local observations
+            q_input = tf.concat([obs_ph_n[p_index], act_input_n[p_index]], 1)  # +
+            # input to the critic is the observation + actor's action (wrapped in pd) for those observations
+        else:
+            print("ATOC_COMA needs to use local q function!")
+            raise NotImplementedError
+
+        # ~, create the critic model. TODO: WHY are we creating a critic model here?
+        q = q_func(q_input, 1, scope="shared_q_func", reuse=True, num_units=num_units)[:,0]
+
+        # +, policy_loss = -critic(obs,action), i.e., -(q function)
         pg_loss = -tf.reduce_mean(q)
 
-        loss = pg_loss + p_reg * 1e-3
+        loss = pg_loss + p_reg * 1e-3    # ~
+        # looks like r_reg is trying to punish large actions
 
+        # It gets a return for an Operation that applies gradients
+        # Since this is actor network, we send policy loss, and params of actor model for optimizing
         optimize_expr = U.minimize_and_clip(optimizer, loss, p_func_vars, grad_norm_clipping)
 
+        #TODO: I just skimmed rest of this function. Maybe review it.
         # Create callable functions
         train = U.function(inputs=obs_ph_n + act_ph_n, outputs=loss, updates=[optimize_expr])
         act = U.function(inputs=[obs_ph_n[p_index]], outputs=act_sample)
@@ -114,6 +143,7 @@ def p_train_2(make_obs_ph_n, act_space_n, p_index, p_func, q_func, optimizer, gr
 
         loss = pg_loss + p_reg * 1e-3
 
+        # It gets a return for an Operation that applies gradients.
         optimize_expr = U.minimize_and_clip(optimizer, loss, p_func_vars, grad_norm_clipping)
 
         # Create callable functions
@@ -148,7 +178,7 @@ def q_train(make_obs_ph_n, act_space_n, q_index, q_func, optimizer, grad_norm_cl
         act_ph_n = [act_pdtype_n[i].sample_placeholder([None], name="action"+str(i)) for i in range(len(act_space_n))]
         target_ph = tf.placeholder(tf.float32, [None], name="target")
 
-        q_input = tf.concat(obs_ph_n + act_ph_n, 1)
+        q_input = tf.concat(obs_ph_n + act_ph_n, 1)  # TODO: only put agent i's obs and action. see ATOC paper first
         if local_q_func:
             q_input = tf.concat([obs_ph_n[q_index], act_ph_n[q_index]], 1)
         q = q_func(q_input, 1, scope="q_func", num_units=num_units)[:,0]
@@ -190,7 +220,7 @@ class ATOC_COMA_AgentTrainer(AgentTrainer):
     It will have functions to calculate actions, store and sample experiences from the replay buffer,
     and update the actor and critic networks.
 
-    Dont worry about the obs_shape_n and act_space_n being a list for observations and actions for all the agents.
+    Don't worry about the obs_shape_n and act_space_n being a list for observations and actions for all the agents.
     If we dont use maddpg (see arglist), then in q_train, the q_input will only have the obs and act of that particular agent
     '''
 
@@ -233,7 +263,7 @@ class ATOC_COMA_AgentTrainer(AgentTrainer):
             act_space_n=act_space_n,
             p_index=agent_index,
             p_func=actor1_model,
-            q_func=critic_model,    # This would create it's own critic, which is NOT what we want!
+            q_func=critic_model,    # I think this would create it's own critic, which is NOT what we want!
             optimizer=tf.train.AdamOptimizer(learning_rate=args.lr),
             grad_norm_clipping=0.5,
             local_q_func=local_q_func,
@@ -247,7 +277,7 @@ class ATOC_COMA_AgentTrainer(AgentTrainer):
             act_space_n=act_space_n,
             p_index=agent_index,
             p_func=actor2_model,
-            q_func=critic_model,    # This would create it's own critic, which is NOT what we want!
+            q_func=critic_model,    # I think this would create it's own critic, which is NOT what we want!
             optimizer=tf.train.AdamOptimizer(learning_rate=args.lr),
             grad_norm_clipping=0.5,
             local_q_func=local_q_func,
@@ -311,7 +341,7 @@ class ATOC_COMA_AgentTrainer(AgentTrainer):
         # train p network
         p_loss = self.p_train(*(obs_n + act_n))
 
-        self.p_update()
+        self.p_update()    #self.p_update_1 and self.p_update_2
         self.q_update()
 
         return [q_loss, p_loss, np.mean(target_q), np.mean(rew), np.mean(target_q_next), np.std(target_q)]

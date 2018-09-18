@@ -62,7 +62,7 @@ def make_env(scenario_name, arglist, benchmark=False):
     return env
 
 '''
-Since we want all the actors and critics to have the network, we want to share, i.e., "reuse" the parameters
+Since we want all the actors and critics to have the same network, we want to share, i.e., "reuse" the parameters
 Also, to do this we need to make the "scope" of the variables that we want to reuse the same.
 
 look at variable_scope.py
